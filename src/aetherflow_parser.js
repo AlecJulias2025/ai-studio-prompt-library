@@ -58,11 +58,14 @@ async function resolveConduits(text, procedure) {
     }
 
     await Promise.all(mountPromises);
+
+    // Return the text with the mount directives stripped out.
     return text.replace(mountRegex, '').trim();
 }
 
 /**
  * Creates a hidden iframe to scrape a conversation and mounts it into the conduits store.
+ * This process is transactional.
  * @param {string} alias - The alias for the mounted conversation.
  * @param {string} chatUID - The UID of the chat to load.
  * @param {object} procedure - The procedure configuration.
@@ -87,6 +90,7 @@ async function mountConduit(alias, chatUID, procedure) {
                 }
             };
             iframe.onerror = () => reject(new Error(`Iframe failed to load for chat UID: ${chatUID}`));
+
             iframe.src = `https://aistudio.google.com/chat/${chatUID}`;
             document.body.appendChild(iframe);
         });

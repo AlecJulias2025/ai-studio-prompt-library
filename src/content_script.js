@@ -8,6 +8,7 @@ import autoAnimate from '@formkit/auto-animate';
 import { marked } from 'marked';
 import { Updater } from './updater.js';
 import { bus } from './event_bus.js';
+import { parse as parseAetherflow } from './aetherflow_parser.js';
 
 // Use an IIFE to avoid polluting the global scope of the host page.
 (async function() {
@@ -18,30 +19,45 @@ import { bus } from './event_bus.js';
   // --- Default Configuration: This will be used on first run ---
   const DEFAULT_PROCEDURE = {
     attachLibraryButton: {
-      description: "Attach the 'Instructions Library' button relative to the 'Send a message' input area.",
-      targetAriaLabel: 'Send a message',
-      targetXPath: '//*[@aria-label="Send a message"]',
-      position: 'beforebegin' // 'beforebegin', 'afterbegin', 'beforeend', 'afterend'
+      description: "Attach the 'Instructions Library' button relative to the prompt input area.",
+      targetAriaLabel: "Start typing a prompt",
+      targetXPath: "//*[@aria-label='Start typing a prompt']",
+      position: "beforebegin"
     },
     steps: {
       openSystemInstructions: {
         description: "Click the 'System instructions' button to open the editing modal.",
-        targetAriaLabel: 'System instructions',
-        targetXPath: '//*[@aria-label="System instructions"]',
+        targetAriaLabel: "System instructions",
+        targetXPath: "//*[@aria-label='System instructions']",
         waitForElement: false
       },
       pasteIntoTextarea: {
         description: "Find the main textarea within the modal and paste the instructions.",
-        targetAriaLabel: 'Edit system instructions',
-        targetXPath: '//*[@aria-label="Edit system instructions"]',
+        targetAriaLabel: "System instructions",
+        targetXPath: "//*[@aria-label='System instructions']",
         waitForElement: true
       },
-      saveAndClose: {
-        description: "Click the 'Save' button to confirm changes and close the modal.",
-        targetAriaLabel: 'Save',
-        targetXPath: '//*[@aria-label="Save"]',
+      closePanel: {
+        description: "Click the 'Close panel' button to confirm changes.",
+        targetAriaLabel: "Close panel",
+        targetXPath: "//*[@aria-label='Close panel']",
         waitForElement: true
       }
+    },
+    chatHistorySelectors: {
+      conversationContainer: "ms-autoscroll-container",
+      messageTurnContainer: ".chat-turn-container",
+      authorIdentification: {
+        user: "[data-turn-role='User'] .very-large-text-container",
+        ai: {
+          chat: "[data-turn-role='Model'] > .turn-content > ms-prompt-chunk:not(:has(ms-thought-chunk)) .very-large-text-container",
+          thoughts: "[data-turn-role='Model'] ms-thought-chunk .very-large-text-container"
+        }
+      }
+    },
+    promptSubmission: {
+      inputArea: "textarea[aria-label='Start typing a prompt']",
+      submitButton: "button[aria-label='Run']"
     }
   };
 
@@ -112,10 +128,10 @@ import { bus } from './event_bus.js';
       textarea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
       console.log("Step 2/3: Pasted instructions into textarea.");
 
-      const saveStep = procedure.steps.saveAndClose;
-      const saveButton = await waitForElement(saveStep.targetAriaLabel, saveStep.targetXPath);
-      saveButton.click();
-      console.log("Step 3/3: Saved and closed. Procedure complete.");
+      const closeStep = procedure.steps.closePanel;
+      const closeButton = await waitForElement(closeStep.targetAriaLabel, closeStep.targetXPath);
+      closeButton.click();
+      console.log("Step 3/3: Closed panel. Procedure complete.");
 
     } catch (error) {
       alert(`An error occurred during the procedure:\n${error.message}\n\nPlease run the Updater Mode to re-calibrate the extension.`);
@@ -293,6 +309,56 @@ import { bus } from './event_bus.js';
   }
 
   /**
+   * Intercepts the primary "Send" button click to process Aetherflow syntax.
+   */
+  async function interceptSendAction() {
+    try {
+      const submitButtonSelector = procedure.promptSubmission.submitButton;
+      const inputAreaSelector = procedure.promptSubmission.inputArea;
+
+      const submitButton = await waitForElement('Run', "//*[@aria-label='Run']");
+      if (!submitButton) {
+        console.error("Aetherflow Interceptor: Could not find the submit button.");
+        return;
+      }
+
+      submitButton.addEventListener('click', async (event) => {
+        const inputArea = document.querySelector(inputAreaSelector);
+        if (!inputArea) return;
+
+        const rawText = inputArea.value;
+
+        if (rawText.includes('~{{~')) {
+          console.log('Aetherflow: Syntax detected, intercepting send action.');
+          event.preventDefault();
+          event.stopPropagation();
+
+          try {
+            submitButton.disabled = true;
+            const cleanText = await parseAetherflow(rawText, procedure);
+            inputArea.value = cleanText;
+            inputArea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+
+            // Re-dispatch a clean click.
+            submitButton.click();
+
+          } catch (error) {
+            console.error("Aetherflow: Error during parsing:", error);
+            alert(`Aetherflow Engine Error:\n\n${error.message}`);
+          } finally {
+            submitButton.disabled = false;
+          }
+        }
+      }, { capture: true });
+
+      console.log("Aetherflow Interceptor: Attached to send button.");
+
+    } catch (error) {
+      console.error("Aetherflow: Failed to initialize send interceptor.", error);
+    }
+  }
+
+  /**
    * Main initialization function for the content script.
    */
   async function init() {
@@ -327,6 +393,7 @@ import { bus } from './event_bus.js';
     }
 
     injectLibraryButton();
+    interceptSendAction();
   }
   
   // A small delay to let the host application render.

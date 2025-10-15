@@ -5,7 +5,7 @@
  * This script is loaded before content_script.js so the class is available.
  */
 
-class Updater {
+export class Updater {
     constructor(procedure, onComplete) {
         this.procedure = JSON.parse(JSON.stringify(procedure)); // Deep copy
         this.onComplete = onComplete;

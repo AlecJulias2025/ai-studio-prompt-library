@@ -1,0 +1,117 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: #f0f2f5;
+    color: #1c1e21;
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    padding: 20px 30px;
+}
+
+header {
+    border-bottom: 1px solid #dddfe2;
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+}
+
+header h1 {
+    font-size: 24px;
+    margin: 0 0 5px 0;
+}
+
+header p {
+    font-size: 14px;
+    color: #606770;
+    margin: 0;
+}
+
+section {
+    margin-bottom: 30px;
+}
+
+section h2 {
+    font-size: 18px;
+    margin: 0 0 10px 0;
+    color: #333;
+}
+
+section p {
+    font-size: 14px;
+    color: #606770;
+    line-height: 1.5;
+}
+
+p.warning {
+    background-color: #fffbe2;
+    border: 1px solid #ffe89d;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    border: 1px solid #ccd0d5;
+    border-radius: 6px;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 13px;
+    margin-bottom: 10px;
+}
+
+button, .import-label {
+    background-color: #e4e6eb;
+    color: #4b4f56;
+    border: 1px solid #ccd0d5;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+button:hover, .import-label:hover {
+    background-color: #d8dbdf;
+}
+
+button.save-btn {
+    background-color: #1877f2;
+    color: #fff;
+    border: none;
+}
+button.save-btn:hover {
+    background-color: #166fe5;
+}
+
+#launch-updater-btn {
+    background-color: #fbbc05;
+    color: #202124;
+    border-color: #f29900;
+}
+
+#export-btn {
+    background-color: #34a853;
+    color: white;
+    border: none;
+}
+#export-btn:hover {
+    background-color: #2e9447;
+}
+
+.import-label {
+    display: inline-block;
+    background-color: #f5f5f5;
+}
+
+.io-buttons {
+    display: flex;
+    gap: 10px;
+}

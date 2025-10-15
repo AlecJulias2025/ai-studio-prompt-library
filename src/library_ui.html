@@ -1,0 +1,40 @@
+<div id="library-wrapper">
+    <header>
+        <h2>📕 Instructions Library</h2>
+        <div>
+            <button id="theme-toggle-btn" title="Toggle Theme">🌙</button>
+            <button id="close-library-btn" title="Close Library">&times;</button>
+        </div>
+    </header>
+    <main>
+        <div id="prompt-list-container">
+            <div id="prompt-list">
+                <!-- Prompt items will be injected here by JS -->
+            </div>
+        </div>
+        <div id="prompt-preview-container">
+            <h3>Preview</h3>
+            <div id="prompt-preview">
+                Hover over a prompt to see its description.
+            </div>
+        </div>
+    </main>
+    <footer>
+        <div id="import-container">
+            <select id="import-type">
+                <option value="paste">Paste</option>
+                <option value="upload">Upload</option>
+                <option value="url">Import from URL</option>
+            </select>
+            <div id="import-fields">
+                <textarea id="paste-input" placeholder="Paste prompt here..."></textarea>
+                <input type="file" id="upload-input" accept=".txt,.md" style="display: none;">
+                <input type="text" id="url-input" placeholder="Enter prompt URL..." style="display: none;">
+            </div>
+            <button id="import-prompt-btn">Import</button>
+        </div>
+        <input type="search" id="filter-prompts" placeholder="Filter prompts...">
+        <button id="updater-mode-btn">Start Updater Mode</button>
+    </footer>
+</div>
+<script src="library_ui.js"></script>

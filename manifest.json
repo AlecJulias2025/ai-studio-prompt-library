@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "AI Studio Self-Updating Prompt Library",
+  "version": "1.0.0",
+  "description": "Injects a self-updating prompt library into AI Studio, driven by a user-configurable procedure file.",
+  "author": "Forge (Generated)",
+  "icons": {
+    "48": "src/icons/icon-48.png",
+    "96": "src/icons/icon-96.png"
+  },
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://aistudio.google.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://aistudio.google.com/*"
+      ],
+      "js": [
+        "src/content_script.js"
+      ]
+    }
+  ],
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/prompt_sources.js",
+        "src/prompts/creative_writer.txt",
+        "src/library_ui.html",
+        "src/library_ui.css",
+        "src/options.css"
+      ],
+      "matches": [
+        "*://aistudio.google.com/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_title": "Prompt Library Settings",
+    "default_icon": {
+      "48": "src/icons/icon-48.png"
+    }
+  }
+}

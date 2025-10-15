@@ -1,0 +1,202 @@
+:host {
+    --bg-color: #f8f9fa;
+    --text-color: #202124;
+    --header-bg: #e8eaed;
+    --border-color: #dadce0;
+    --hover-bg: #e8f0fe;
+    --hover-text: #1967d2;
+    --button-bg: #1a73e8;
+    --button-text: #ffffff;
+    --scrollbar-thumb: #a9a9a9;
+    --scrollbar-track: #f1f1f1;
+
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+:host(.dark) {
+    --bg-color: #202124;
+    --text-color: #e8eaed;
+    --header-bg: #303134;
+    --border-color: #5f6368;
+    --hover-bg: #3c4043;
+    --hover-text: #8ab4f8;
+    --button-bg: #8ab4f8;
+    --button-text: #202124;
+    --scrollbar-thumb: #5f6368;
+    --scrollbar-track: #303134;
+}
+
+#library-wrapper {
+    position: fixed;
+    bottom: 80px; /* Adjust to sit above common input areas */
+    right: 20px;
+    width: 650px;
+    height: 400px;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    color: var(--text-color);
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--header-bg);
+}
+
+header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+header div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#theme-toggle-btn,
+#close-library-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-color);
+    padding: 0 8px;
+}
+
+main {
+    display: flex;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+#prompt-list-container, #prompt-preview-container {
+    padding: 8px;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+#prompt-list-container {
+    width: 40%;
+    border-right: 1px solid var(--border-color);
+    overflow-y: auto;
+}
+
+#prompt-preview-container {
+    width: 60%;
+    overflow-y: auto;
+}
+
+#prompt-preview-container h3 {
+    margin-top: 0;
+    font-size: 14px;
+    color: #5f6368;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 8px;
+}
+
+#prompt-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.prompt-item {
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.prompt-item:hover {
+    background-color: var(--hover-bg);
+    color: var(--hover-text);
+}
+
+footer {
+    padding: 8px 16px;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--header-bg);
+}
+
+footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#import-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#import-fields textarea, #import-fields input {
+    width: 200px;
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+#import-prompt-btn {
+    background-color: var(--button-bg);
+    color: var(--button-text);
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
+#updater-mode-btn {
+    background-color: #fbbc05;
+    color: #202124;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+#updater-mode-btn:hover {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+#filter-prompts {
+    width: 150px;
+    padding: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    margin-left: auto;
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+#prompt-preview h1 { font-size: 1.2em; }
+#prompt-preview h2 { font-size: 1.1em; }
+#prompt-preview strong { color: #1a73e8; }
+#prompt-preview br { content: ""; display: block; margin: 0.5em 0; }

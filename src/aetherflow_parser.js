@@ -7,7 +7,7 @@
  */
 
 import { sessionMemory, conversationHistory, conduits } from './aetherflow_state.js';
-// Note: We will need to import browser storage access logic later.
+import { bus } from './event_bus.js';
 
 let _conversationScraped = false; // Memoization flag for the current conversation scraper
 
@@ -20,20 +20,22 @@ let _conversationScraped = false; // Memoization flag for the current conversati
  * @returns {Promise<string>} - A promise that resolves to the final, clean text.
  */
 export async function parse(rawText, procedure) {
-  console.log('Aetherflow: Parsing started.');
-  _conversationScraped = false; // Reset memoization flag for each new parse
+  bus.emit('aetherflow:start');
+  try {
+    console.log('Aetherflow: Parsing started.');
+    _conversationScraped = false; // Reset memoization flag for each new parse
 
-  // Phase 1: Mount Conduits (Not yet implemented)
-  const textAfterMounts = await resolveConduits(rawText, procedure);
+    const textAfterMounts = await resolveConduits(rawText, procedure);
+    await scrapeCurrentConversation(procedure);
+    const finalText = await resolvePortals(textAfterMounts, procedure);
 
-  // Phase 2: Scrape current conversation history
-  await scrapeCurrentConversation(procedure);
-
-  // Phase 3: Recursively resolve Portals
-  const finalText = await resolvePortals(textAfterMounts, procedure);
-
-  console.log('Aetherflow: Parsing complete.');
-  return finalText;
+    console.log('Aetherflow: Parsing complete.');
+    bus.emit('aetherflow:complete', { result: finalText });
+    return finalText;
+  } catch (error) {
+    bus.emit('aetherflow:error', { error: error.message });
+    throw error; // Re-throw to be caught by the UI interceptor
+  }
 }
 
 // --- Scaffolding for Core Logic ---
@@ -69,7 +71,7 @@ async function resolveConduits(text, procedure) {
  * @param {object} procedure - The procedure configuration.
  */
 async function mountConduit(alias, chatUID, procedure) {
-    console.log(`Aetherflow: Mounting Conduit '${alias}' from chat '${chatUID}'...`);
+    bus.emit('conduit:mount:start', { alias, chatUID });
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
 
@@ -79,9 +81,8 @@ async function mountConduit(alias, chatUID, procedure) {
                 try {
                     const selectors = procedure.chatHistorySelectors;
                     const history = scrapeConversationFromDoc(iframe.contentDocument, selectors);
-
-                    // Transactional update: only set state on full success
                     conduits.setKey(alias, history);
+                    bus.emit('conduit:mount:success', { alias, turnCount: history.length });
                     console.log(`Aetherflow: Successfully mounted Conduit '${alias}' with ${history.length} turns.`);
                     resolve();
                 } catch (scrapeError) {
@@ -94,10 +95,9 @@ async function mountConduit(alias, chatUID, procedure) {
             document.body.appendChild(iframe);
         });
     } catch (error) {
+        bus.emit('conduit:mount:fail', { alias, error: error.message });
         console.error(`Aetherflow: Failed to mount Conduit '${alias}'.`, error);
-        // Do not update state, ensuring transactional integrity.
     } finally {
-        // Cleanup: always remove the iframe.
         iframe.remove();
     }
 }
@@ -187,38 +187,219 @@ async function resolvePortals(text, procedure) {
 
 /**
  * Executes a single portal's content.
- * @param {string} portalContent - e.g., "'my-prompt'[param1: 'value1']"
+ * @param {string} portalContent - e.g., "'my-prompt'[param1: 'value1']" or "@USER-1:delete"
  * @param {object} procedure - The procedure configuration.
  * @returns {Promise<string>} - The result of the portal execution.
  */
 async function executePortal(portalContent, procedure) {
-  const match = portalContent.trim().match(/^'([^']*)'(\[(.*)\])?/);
-  if (!match) throw new Error(`Invalid Portal syntax: ${portalContent}`);
+  portalContent = portalContent.trim();
 
-  const promptId = match[1];
-  const paramsString = match[3] || '';
-  const params = parseParameters(paramsString);
-
-  // Resolve all parameter values asynchronously
-  const resolvedParams = {};
-  for (const key in params) {
-    resolvedParams[key] = await resolveValue(params[key], procedure);
+  // Router: Check if it's an Action Portal or a Data Portal
+  if (portalContent.startsWith('@')) {
+    return await executeActionPortal(portalContent, procedure);
+  } else {
+    return await executeDataPortal(portalContent, procedure);
   }
+}
 
-  const promptTemplate = await getPromptTemplate(promptId);
-  if (!promptTemplate) {
-      console.warn(`Aetherflow: Prompt with ID '${promptId}' not found. Replacing with empty string.`);
-      return '';
-  }
+/**
+ * Executes a Data Portal, which resolves a prompt template with parameters.
+ * @param {string} portalContent - e.g., "'my-prompt'[param1: 'value1']"
+ * @param {object} procedure - The procedure configuration.
+ * @returns {Promise<string>} - The resolved text.
+ */
+async function executeDataPortal(portalContent, procedure) {
+    bus.emit('portal:resolve:start', { content: portalContent });
+    try {
+        const match = portalContent.match(/^'([^']*)'(\[(.*)\])?/);
+        if (!match) throw new Error(`Invalid Data Portal syntax: ${portalContent}`);
 
-  // Inject resolved params into the template
-  let output = promptTemplate;
-  for (const key in resolvedParams) {
-    const regex = new RegExp(`{{${key}}}`, 'g');
-    output = output.replace(regex, resolvedParams[key]);
-  }
+        const promptId = match[1];
+        const paramsString = match[3] || '';
+        const params = parseParameters(paramsString);
 
-  return output;
+        const resolvedParams = {};
+        for (const key in params) {
+            resolvedParams[key] = await resolveValue(params[key], procedure);
+        }
+
+        const promptTemplate = await getPromptTemplate(promptId);
+        if (!promptTemplate) {
+            console.warn(`Aetherflow: Prompt '${promptId}' not found. Replacing with empty string.`);
+            return '';
+        }
+
+        let output = promptTemplate;
+        for (const key in resolvedParams) {
+            const regex = new RegExp(`{{${key}}}`, 'g');
+            output = output.replace(regex, resolvedParams[key]);
+        }
+
+        bus.emit('portal:resolve:success', { content: portalContent, result: output });
+        return output;
+    } catch (error) {
+        bus.emit('portal:resolve:fail', { content: portalContent, error: error.message });
+        throw error;
+    }
+}
+
+/**
+ * Executes an Action Portal, which performs a UI manipulation.
+ * @param {string} portalContent - e.g., "@USER-1:delete"
+ * @param {object} procedure - The procedure configuration.
+ * @returns {Promise<string>} - An empty string on success. Throws on failure.
+ */
+async function executeActionPortal(portalContent, procedure) {
+    bus.emit('portal:action:start', { content: portalContent });
+    const dom = new ActionPortalDOM(procedure);
+
+    try {
+        const [target, action, paramsString] = parseActionSyntax(portalContent);
+        const params = parseParameters(paramsString || '');
+
+        const turnElement = dom.findMessageTurn(target);
+        if (!turnElement) {
+            throw new Error(`Target message "${target}" not found.`);
+        }
+
+        switch (action) {
+            case 'delete':
+                await dom.delete(turnElement);
+                break;
+            case 'rerun':
+                await dom.rerun(turnElement);
+                break;
+            case 'branch':
+                await dom.branch(turnElement);
+                break;
+            case 'edit':
+                const newText = await resolveValue(params['new_text'] || '', procedure);
+                if (!newText) throw new Error(":edit action requires a 'new_text' parameter.");
+                await dom.edit(turnElement, newText);
+                break;
+            case 'copy':
+                 const format = await resolveValue(params['format'] || "'text'", procedure);
+                 await dom.copy(turnElement, format);
+                 break;
+            default:
+                throw new Error(`Unknown action ":${action}".`);
+        }
+
+        sessionMemory.setKey('__lastActionStatus', 'SUCCESS');
+        bus.emit('portal:action:success', { content: portalContent });
+        return '';
+    } catch (error) {
+        sessionMemory.setKey('__lastActionStatus', 'FAILED');
+        bus.emit('portal:action:fail', { content: portalContent, error: error.message });
+        throw new Error(`Action Portal failed: ${error.message}`);
+    }
+}
+
+/**
+ * Parses the action portal syntax e.g., "@USER-1:edit[new_text: '...']"
+ * @param {string} portalContent - The content of the action portal.
+ * @returns {[string, string, string]} - An array containing [target, action, paramsString].
+ */
+function parseActionSyntax(portalContent) {
+    const match = portalContent.match(/(@[A-Z0-9:-]+):(\w+)(\[.*\])?/);
+    if (!match) throw new Error(`Invalid Action Portal syntax: ${portalContent}`);
+    return [match[1], match[2], match[3]];
+}
+
+
+// --- DOM Manipulation Class for Action Portals ---
+
+class ActionPortalDOM {
+    constructor(procedure) {
+        this.selectors = procedure.chatHistorySelectors;
+        // Add specific action selectors if they exist in the procedure,
+        // otherwise use the defaults provided in the briefing.
+        this.actionSelectors = procedure.actionSelectors || {
+            editButton: 'button[aria-label="Edit"]',
+            rerunButton: 'button[aria-label="Rerun this turn"]',
+            moreOptionsButton: 'button[aria-label="Open options"]',
+            deleteButton: 'button.mat-mdc-menu-item:has-text("Delete")',
+            branchButton: 'button.mat-mdc-menu-item:has-text("Branch from here")',
+            copyTextButton: 'button.mat-mdc-menu-item:has-text("Copy as text")',
+            copyMarkdownButton: 'button.mat-mdc-menu-item:has-text("Copy as markdown")'
+        };
+    }
+
+    /**
+     * Finds the specific message turn container element in the DOM.
+     * @param {string} targetLink - The link to the message, e.g., "@USER-1".
+     * @returns {HTMLElement|null} - The found element or null.
+     */
+    findMessageTurn(targetLink) {
+        const linkMatch = targetLink.match(/@(?:([^:]+):)?(USER|AI)-(\d+)/);
+        if (!linkMatch) return null;
+
+        const [, alias, author, indexStr] = linkMatch;
+        const index = parseInt(indexStr, 10);
+
+        let container = document;
+        if (alias) {
+            // This is a simplified approach. A real implementation would
+            // need to handle finding the correct iframe context for conduits.
+            // For now, we assume actions only happen on the main page.
+            console.warn("Action Portals on Conduits are not yet supported.");
+            return null;
+        }
+
+        const allTurns = container.querySelectorAll(this.selectors.messageTurnContainer);
+        const authorSelector = author === 'USER'
+            ? this.selectors.authorIdentification.user
+            : this.selectors.authorIdentification.ai.chat; // Use .chat as the primary identifier
+
+        const authorTurns = Array.from(allTurns).filter(turn => turn.querySelector(authorSelector));
+
+        return authorTurns[authorTurns.length - index] || null;
+    }
+
+    async #click(element, selector, timeout = 500) {
+        const button = element.querySelector(selector);
+        if (!button) throw new Error(`Button with selector "${selector}" not found.`);
+        button.click();
+        await new Promise(r => setTimeout(r, timeout)); // Wait for UI to update
+    }
+
+    async #openMoreOptionsAndClick(turnElement, selector) {
+        await this.#click(turnElement, this.actionSelectors.moreOptionsButton);
+        // The menu is appended to the body, not the turn element
+        const menuItem = document.querySelector(selector);
+        if (!menuItem) throw new Error(`Menu item with selector "${selector}" not found.`);
+        menuItem.click();
+    }
+
+    async delete(turnElement) {
+        await this.#openMoreOptionsAndClick(turnElement, this.actionSelectors.deleteButton);
+    }
+
+    async rerun(turnElement) {
+        await this.#click(turnElement, this.actionSelectors.rerunButton);
+    }
+
+    async branch(turnElement) {
+        await this.#openMoreOptionsAndClick(turnElement, this.actionSelectors.branchButton);
+    }
+
+    async copy(turnElement, format = 'text') {
+        const selector = format === 'markdown'
+            ? this.actionSelectors.copyMarkdownButton
+            : this.actionSelectors.copyTextButton;
+        await this.#openMoreOptionsAndClick(turnElement, selector);
+    }
+
+    async edit(turnElement, newText) {
+        await this.#click(turnElement, this.actionSelectors.editButton);
+        const textarea = turnElement.querySelector('textarea'); // Assume a textarea appears
+        if (!textarea) throw new Error("Could not find textarea after clicking edit.");
+        textarea.value = newText;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // Assuming there's a 'Save' button that appears after editing
+        await this.#click(turnElement, 'button[aria-label="Save"]');
+    }
 }
 
 /**
@@ -270,52 +451,52 @@ async function resolveValue(value, procedure) {
  * @returns {Promise<string>} - The resolved content.
  */
 async function resolveLink(link) {
-    // Session Memory Variable: $varName
-    if (link.startsWith('$')) {
-        const varName = link.substring(1);
-        return sessionMemory.get()[varName] || '';
-    }
+    bus.emit('link:resolve:start', { link });
+    try {
+        let result = '';
+        if (link.startsWith('$')) {
+            const varName = link.substring(1);
+            result = sessionMemory.get()[varName] || '';
+        } else if (link.startsWith('@')) {
+            let history, target, specifier;
+            const linkBody = link.substring(1);
 
-    // Conversation History Link: @...
-    if (link.startsWith('@')) {
-        let history, target, specifier;
-        const linkBody = link.substring(1);
+            if (linkBody.includes(':')) {
+                const parts = linkBody.split(':');
+                const alias = parts[0];
+                const conduitHistories = conduits.get();
+                history = conduitHistories[alias];
+                target = parts[1];
+                specifier = parts[2];
+            } else {
+                history = conversationHistory.get();
+                target = linkBody;
+            }
 
-        // Check for Cross-Conduit link: @Alias:USER-#...
-        if (linkBody.includes(':')) {
-            const parts = linkBody.split(':');
-            const alias = parts[0];
-            const conduitHistories = conduits.get();
-            history = conduitHistories[alias];
-            target = parts[1];
-            specifier = parts[2]; // Can be undefined
-        } else { // It's a local conversation link
-            history = conversationHistory.get();
-            target = linkBody;
-            specifier = undefined;
+            if (history) {
+                const match = target.match(/(USER|AI)-(\d+)/);
+                if (match) {
+                    const authorType = match[1].toLowerCase();
+                    const index = parseInt(match[2], 10);
+                    const messagesOfAuthor = history.filter(m => m.author === authorType);
+                    const targetMessage = messagesOfAuthor[messagesOfAuthor.length - index];
+
+                    if (targetMessage) {
+                        if (authorType === 'user') {
+                            result = targetMessage.content || '';
+                        } else {
+                            result = specifier === 'thoughts' ? targetMessage.thoughts : targetMessage.chat;
+                        }
+                    }
+                }
+            }
         }
-
-        if (!history) return ''; // History not found
-
-        const match = target.match(/(USER|AI)-(\d+)/);
-        if (!match) return '';
-
-        const authorType = match[1].toLowerCase();
-        const index = parseInt(match[2], 10);
-
-        const messagesOfAuthor = history.filter(m => m.author === authorType);
-        const targetMessage = messagesOfAuthor[messagesOfAuthor.length - index];
-
-        if (!targetMessage) return '';
-
-        if (authorType === 'user') {
-            return targetMessage.content || '';
-        } else { // authorType is 'ai'
-            return specifier === 'thoughts' ? targetMessage.thoughts : targetMessage.chat;
-        }
+        bus.emit('link:resolve:success', { link, result });
+        return result;
+    } catch (error) {
+        bus.emit('link:resolve:fail', { link, error: error.message });
+        return ''; // Fail gracefully for links to prevent halting execution
     }
-
-    return ''; // Should not be reached
 }
 
 /**

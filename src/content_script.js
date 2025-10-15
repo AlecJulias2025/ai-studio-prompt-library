@@ -244,11 +244,11 @@ import { parse as parseAetherflow } from './aetherflow_parser.js';
           bus.emit('startUpdater'); // [UPGRADE COMPLETE]
         });
 
-        // 2. Attach auto-animate to the list container for smooth transitions
+        // 2. Attach auto-animate to the list containers for smooth transitions
         const listContainer = shadowRoot.getElementById('prompt-list');
-        if (listContainer) {
-          autoAnimate(listContainer); // [UPGRADE COMPLETE]
-        }
+        const logList = shadowRoot.getElementById('aetherflow-log-list');
+        if (listContainer) autoAnimate(listContainer);
+        if (logList) autoAnimate(logList); // [UPGRADE COMPLETE]
         
         populateLibrary();
         
@@ -259,6 +259,36 @@ import { parse as parseAetherflow } from './aetherflow_parser.js';
     } else if (libraryVisible) {
         populateLibrary();
     }
+  }
+
+  /**
+   * Updates the Aetherflow status panel with a new log message.
+   */
+  function updateAetherflowStatus(type, data) {
+    if (!shadowRoot) return;
+    const panel = shadowRoot.getElementById('aetherflow-status-panel');
+    const logList = shadowRoot.getElementById('aetherflow-log-list');
+    if (!panel || !logList) return;
+
+    panel.style.display = 'block';
+
+    const li = document.createElement('li');
+    let message = `[${type}]`;
+
+    // Add specific details based on the event type
+    if (data?.content) message += `: ${data.content}`;
+    if (data?.link) message += `: Resolving ${data.link}`;
+    if (data?.alias) message += `: Mounting ${data.alias}`;
+    if (data?.error) {
+        li.className = 'error';
+        message += `: FAILED - ${data.error}`;
+    } else if (type.includes(':success')) {
+        li.className = 'success';
+    }
+
+    li.textContent = message;
+    logList.appendChild(li);
+    logList.scrollTop = logList.scrollHeight; // Auto-scroll to bottom
   }
   
   /**
@@ -362,13 +392,32 @@ import { parse as parseAetherflow } from './aetherflow_parser.js';
    * Main initialization function for the content script.
    */
   async function init() {
-    // [UPGRADE COMPLETE] Set up listeners for signals from the UI
-    bus.on('loadPrompt', prompt => {
-      executeProcedure(prompt.instructions);
+    // --- Aetherflow Event Listeners ---
+    bus.on('aetherflow:start', () => {
+      if (shadowRoot) {
+        shadowRoot.getElementById('aetherflow-log-list').innerHTML = '';
+        updateAetherflowStatus('aetherflow:start');
+      }
     });
-    bus.on('startUpdater', () => {
-      startUpdaterMode();
-    });
+    bus.on('aetherflow:complete', () => updateAetherflowStatus('aetherflow:complete'));
+    bus.on('aetherflow:error', (e) => updateAetherflowStatus('aetherflow:error', e));
+    bus.on('conduit:mount:start', (e) => updateAetherflowStatus('conduit:mount:start', e));
+    bus.on('conduit:mount:success', (e) => updateAetherflowStatus('conduit:mount:success', e));
+    bus.on('conduit:mount:fail', (e) => updateAetherflowStatus('conduit:mount:fail', e));
+    bus.on('link:resolve:start', (e) => updateAetherflowStatus('link:resolve:start', e));
+    bus.on('link:resolve:success', (e) => updateAetherflowStatus('link:resolve:success', e));
+    bus.on('link:resolve:fail', (e) => updateAetherflowStatus('link:resolve:fail', e));
+    bus.on('portal:action:start', (e) => updateAetherflowStatus('portal:action:start', e));
+    bus.on('portal:action:success', (e) => updateAetherflowStatus('portal:action:success', e));
+    bus.on('portal:action:fail', (e) => updateAetherflowStatus('portal:action:fail', e));
+    bus.on('portal:resolve:start', (e) => updateAetherflowStatus('portal:resolve:start', e));
+    bus.on('portal:resolve:success', (e) => updateAetherflowStatus('portal:resolve:success', e));
+    bus.on('portal:resolve:fail', (e) => updateAetherflowStatus('portal:resolve:fail', e));
+
+
+    // --- UI Event Listeners ---
+    bus.on('loadPrompt', prompt => executeProcedure(prompt.instructions));
+    bus.on('startUpdater', () => startUpdaterMode());
 
     const shouldStartUpdater = await browser.storage.local.get('startUpdaterMode');
     if(shouldStartUpdater.startUpdaterMode) {

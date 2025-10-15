@@ -8,6 +8,8 @@
 
 import { sessionMemory, conversationHistory, conduits } from './aetherflow_state.js';
 import { bus } from './event_bus.js';
+import { parsePromptText } from './prompt_utils.js';
+import { DataLinkError } from './errors.js';
 
 let _conversationScraped = false; // Memoization flag for the current conversation scraper
 
@@ -17,17 +19,34 @@ let _conversationScraped = false; // Memoization flag for the current conversati
  * Parses a raw text string containing Aetherflow syntax and resolves it.
  * @param {string} rawText - The user's input text.
  * @param {object} procedure - The procedure configuration with DOM selectors.
+ * @param {Map<string, string>} [overrides=null] - A map of manual overrides for failed links.
  * @returns {Promise<string>} - A promise that resolves to the final, clean text.
  */
-export async function parse(rawText, procedure) {
+export async function parse(rawText, procedure, overrides = null) {
   bus.emit('aetherflow:start');
+  const dataLinkErrors = [];
+
   try {
     console.log('Aetherflow: Parsing started.');
     _conversationScraped = false; // Reset memoization flag for each new parse
 
+    // Mounts and scraping should always happen
     const textAfterMounts = await resolveConduits(rawText, procedure);
     await scrapeCurrentConversation(procedure);
-    const finalText = await resolvePortals(textAfterMounts, procedure);
+
+    let finalText;
+    if (overrides) {
+        console.log('Aetherflow: Retrying with manual overrides.');
+        finalText = await resolvePortalsWithOverrides(textAfterMounts, procedure, overrides);
+    } else {
+        finalText = await resolvePortals(textAfterMounts, procedure, dataLinkErrors);
+    }
+
+    if (dataLinkErrors.length > 0) {
+        const errorSummary = new Error("One or more data links could not be resolved.");
+        errorSummary.dataLinkErrors = dataLinkErrors;
+        throw errorSummary;
+    }
 
     console.log('Aetherflow: Parsing complete.');
     bus.emit('aetherflow:complete', { result: finalText });
@@ -169,36 +188,86 @@ const USER_PROMPT_CACHE_KEY = 'userPromptCache';
  * It works from the inside out to handle nesting correctly.
  * @param {string} text - The text to resolve.
  * @param {object} procedure - The procedure configuration.
+ * @param {Array} errors - An array to collect DataLinkError instances.
  * @returns {Promise<string>} - The fully resolved text.
  */
-async function resolvePortals(text, procedure) {
+async function resolvePortals(text, procedure, errors) {
   const innermostPortalRegex = /~{{~((?:(?!~{{~).)*?)~}}~/;
   let processedText = text;
 
   while (innermostPortalRegex.test(processedText)) {
     const match = processedText.match(innermostPortalRegex);
     const portalContent = match[1];
-    const portalResult = await executePortal(portalContent, procedure);
-    processedText = processedText.replace(match[0], portalResult);
+    try {
+        const portalResult = await executePortal(portalContent, procedure, errors);
+        processedText = processedText.replace(match[0], portalResult);
+    } catch (error) {
+        if (error instanceof DataLinkError) {
+            errors.push(error);
+            // Replace the broken portal with an empty string to prevent infinite loops
+            processedText = processedText.replace(match[0], '');
+        } else {
+            // For non-data-link errors, we should still halt execution.
+            throw error;
+        }
+    }
   }
 
   return processedText;
 }
 
 /**
+ * An alternative resolver that uses a map of manual overrides for failed links.
+ * @param {string} text - The text to resolve.
+ * @param {object} procedure - The procedure configuration.
+ * @param {Map<string, string>} overrides - A map of link -> manual data.
+ * @returns {Promise<string>} - The fully resolved text.
+ */
+async function resolvePortalsWithOverrides(text, procedure, overrides) {
+    // First, do a simple string replacement for all overrides.
+    // This handles cases where links are used directly in the text.
+    let processedText = text;
+    for (const [link, value] of overrides.entries()) {
+        // Use a regex to avoid replacing parts of words or other links.
+        // This looks for the link as a standalone token.
+        const regex = new RegExp(link.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '(?![\\w:-])', 'g');
+        processedText = processedText.replace(regex, value);
+    }
+
+    // Now, resolve the portals. Any links that had overrides are already replaced.
+    // The regular resolver can now run, and it should no longer fail on those links.
+    // We pass an empty error array because we expect no new DataLinkErrors for the overridden items.
+    // If other, non-overridden links fail, they will still throw an error, which is the desired behavior.
+    try {
+        const errors = [];
+        const result = await resolvePortals(processedText, procedure, errors);
+        if (errors.length > 0) {
+             console.warn("Aetherflow retry: Some non-overridden links still failed.", errors);
+             // We return the partially resolved text, as the user has already seen the initial error.
+             return errors.reduce((acc, err) => acc.replace(err.context.link, ''), result);
+        }
+        return result;
+    } catch (error) {
+        console.error("Aetherflow retry: An unexpected error occurred.", error);
+        throw error;
+    }
+}
+
+/**
  * Executes a single portal's content.
  * @param {string} portalContent - e.g., "'my-prompt'[param1: 'value1']" or "@USER-1:delete"
  * @param {object} procedure - The procedure configuration.
+ * @param {Array} errors - The error collector array.
  * @returns {Promise<string>} - The result of the portal execution.
  */
-async function executePortal(portalContent, procedure) {
+async function executePortal(portalContent, procedure, errors) {
   portalContent = portalContent.trim();
 
   // Router: Check if it's an Action Portal or a Data Portal
   if (portalContent.startsWith('@')) {
     return await executeActionPortal(portalContent, procedure);
   } else {
-    return await executeDataPortal(portalContent, procedure);
+    return await executeDataPortal(portalContent, procedure, errors);
   }
 }
 
@@ -206,9 +275,10 @@ async function executePortal(portalContent, procedure) {
  * Executes a Data Portal, which resolves a prompt template with parameters.
  * @param {string} portalContent - e.g., "'my-prompt'[param1: 'value1']"
  * @param {object} procedure - The procedure configuration.
+ * @param {Array} errors - The error collector array.
  * @returns {Promise<string>} - The resolved text.
  */
-async function executeDataPortal(portalContent, procedure) {
+async function executeDataPortal(portalContent, procedure, errors) {
     bus.emit('portal:resolve:start', { content: portalContent });
     try {
         const match = portalContent.match(/^'([^']*)'(\[(.*)\])?/);
@@ -220,14 +290,10 @@ async function executeDataPortal(portalContent, procedure) {
 
         const resolvedParams = {};
         for (const key in params) {
-            resolvedParams[key] = await resolveValue(params[key], procedure);
+            resolvedParams[key] = await resolveValue(params[key], procedure, errors);
         }
 
         const promptTemplate = await getPromptTemplate(promptId);
-        if (!promptTemplate) {
-            console.warn(`Aetherflow: Prompt '${promptId}' not found. Replacing with empty string.`);
-            return '';
-        }
 
         let output = promptTemplate;
         for (const key in resolvedParams) {
@@ -421,14 +487,15 @@ function parseParameters(paramsString) {
  * Resolves a parameter value, which could be a literal, a link, or a nested portal.
  * @param {string} value - The parameter value to resolve.
  * @param {object} procedure - The procedure configuration.
+ * @param {Array} errors - The error collector array.
  * @returns {Promise<string>} - The resolved literal value.
  */
-async function resolveValue(value, procedure) {
+async function resolveValue(value, procedure, errors) {
   value = value.trim();
 
   // It's a nested portal
   if (value.startsWith('~{{~')) {
-    return await resolvePortals(value, procedure);
+    return await resolvePortals(value, procedure, errors);
   }
 
   // It's a link
@@ -491,11 +558,18 @@ async function resolveLink(link) {
                 }
             }
         }
+        if (result === '' || result === undefined || result === null) {
+             throw new DataLinkError(`Link "${link}" resolved to an empty value.`, { link, type: 'link' });
+        }
         bus.emit('link:resolve:success', { link, result });
         return result;
     } catch (error) {
         bus.emit('link:resolve:fail', { link, error: error.message });
-        return ''; // Fail gracefully for links to prevent halting execution
+        // Re-throw as a DataLinkError if it's not one already
+        if (error instanceof DataLinkError) {
+            throw error;
+        }
+        throw new DataLinkError(`Failed to resolve link "${link}".`, { link, type: 'link', originalError: error });
     }
 }
 
@@ -508,20 +582,13 @@ async function getPromptTemplate(promptId) {
     const data = await browser.storage.local.get([BASE_PROMPT_CACHE_KEY, USER_PROMPT_CACHE_KEY]);
     const allPromptsRaw = [...(data[BASE_PROMPT_CACHE_KEY] || []), ...(data[USER_PROMPT_CACHE_KEY] || [])];
 
-    // This mimics the parsing logic from content_script.js
-    const parsedPrompts = allPromptsRaw.map((rawText, index) => {
-        const id = `SI-${String(index + 1).padStart(3, '0')}`;
-        const sysMarker = "~~####SYSTEM_INSTRUCTIONS####~~";
-        const afterMarker = "~~####PROMPT_AFTER####~~";
-        const sysIndex = rawText.indexOf(sysMarker);
-        const afterIndex = rawText.indexOf(afterMarker);
-
-        if (sysIndex === -1 || afterIndex === -1) return null;
-
-        const instructions = rawText.substring(sysIndex + sysMarker.length, afterIndex).trim();
-        return { id, instructions };
-    }).filter(p => p !== null);
+    const parsedPrompts = allPromptsRaw
+        .map((rawText, index) => parsePromptText(rawText, index))
+        .filter(p => p !== null);
 
     const foundPrompt = parsedPrompts.find(p => p.id === promptId);
-    return foundPrompt ? foundPrompt.instructions : null;
+    if (!foundPrompt) {
+        throw new DataLinkError(`Prompt template with ID '${promptId}' not found.`, { link: promptId, type: 'prompt' });
+    }
+    return foundPrompt.instructions;
 }

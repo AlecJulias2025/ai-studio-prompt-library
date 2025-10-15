@@ -1,0 +1,130 @@
+/* src/missing_links_ui.css */
+
+#missing-links-container {
+    padding: 18px;
+    background-color: #2a2a2e; /* Dark theme background */
+    border: 1px solid #c9a456; /* Accent border */
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-family: sans-serif;
+}
+
+#missing-links-container h3 {
+    margin: 0 0 10px;
+    color: #f0c674; /* Accent color for headings */
+    font-size: 18px;
+    display: flex;
+    align-items-center;
+}
+
+#missing-links-container h3 .icon {
+    margin-right: 8px;
+    font-size: 22px;
+}
+
+#missing-links-container p {
+    font-size: 14px;
+    margin-bottom: 15px;
+    line-height: 1.5;
+}
+
+.table-container {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid #444;
+    border-radius: 4px;
+    margin-bottom: 15px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+th, td {
+    padding: 10px;
+    text-align: left;
+    border-bottom: 1px solid #444;
+}
+
+th {
+    background-color: #333;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+}
+
+tbody tr:nth-child(even) {
+    background-color: #2f2f33;
+}
+
+td .source-link {
+    font-family: 'Courier New', Courier, monospace;
+    background-color: #444;
+    padding: 2px 5px;
+    border-radius: 3px;
+    color: #f0c674;
+}
+
+td .type-badge {
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    text-transform: uppercase;
+    font-weight: 500;
+}
+
+td .type-badge.type-link {
+    background-color: #3b5b91;
+    color: #dbeaff;
+}
+
+td .type-badge.type-prompt {
+    background-color: #8c4373;
+    color: #ffdbe8;
+}
+
+input[type="text"] {
+    width: 100%;
+    padding: 8px;
+    background-color: #3c3c41;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #e0e0e0;
+    box-sizing: border-box; /* Ensures padding doesn't affect width */
+}
+
+.footer-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.button-primary {
+    background-color: #f0c674;
+    color: #212121;
+}
+
+.button-primary:hover {
+    background-color: #d8b05b;
+}
+
+#cancel-aetherflow-btn {
+    background-color: #555;
+    color: #e0e0e0;
+}
+
+#cancel-aetherflow-btn:hover {
+    background-color: #666;
+}

@@ -41,6 +41,8 @@
         "src/prompts/creative_writer.txt",
         "src/library_ui.html",
         "src/library_ui.css",
+        "src/missing_links_ui.html",
+        "src/missing_links_ui.css",
         "src/options.css",
         "src/event_bus.js"
       ],

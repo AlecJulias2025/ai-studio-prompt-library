@@ -9,9 +9,47 @@ import { marked } from 'marked';
 import { Updater } from './updater.js';
 import { bus } from './event_bus.js';
 import { parse as parseAetherflow } from './aetherflow_parser.js';
+import { parsePromptText } from './prompt_utils.js';
+import { DataLinkError } from './errors.js';
 
 // Use an IIFE to avoid polluting the global scope of the host page.
 (async function() {
+
+  /**
+   * Displays a non-intrusive notification banner at the top of the page.
+   * @param {string} message - The message to display.
+   * @param {'error'|'info'|'success'} type - The type of notification.
+   */
+  function showNotification(message, type = 'info') {
+      const existingBanner = document.getElementById('forge-notification-banner');
+      if (existingBanner) existingBanner.remove();
+
+      const banner = document.createElement('div');
+      banner.id = 'forge-notification-banner';
+      banner.textContent = message;
+      banner.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 50%;
+          transform: translateX(-50%);
+          background-color: ${type === 'error' ? '#D32F2F' : (type === 'success' ? '#4CAF50' : '#1976D2')};
+          color: white;
+          padding: 12px 20px;
+          border-radius: 0 0 8px 8px;
+          font-family: sans-serif;
+          font-size: 16px;
+          z-index: 9999;
+          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+          transition: top 0.5s ease-in-out;
+      `;
+      document.body.appendChild(banner);
+
+      setTimeout(() => {
+          banner.style.top = '-100px';
+          setTimeout(() => banner.remove(), 500);
+      }, 5000); // Banner disappears after 5 seconds
+  }
+
   const PROCEDURE_KEY = 'procedureConfiguration';
   const BASE_PROMPT_CACHE_KEY = 'basePromptCache';
   const USER_PROMPT_CACHE_KEY = 'userPromptCache';
@@ -134,35 +172,10 @@ import { parse as parseAetherflow } from './aetherflow_parser.js';
       console.log("Step 3/3: Closed panel. Procedure complete.");
 
     } catch (error) {
-      alert(`An error occurred during the procedure:\n${error.message}\n\nPlease run the Updater Mode to re-calibrate the extension.`);
+      showNotification(`Procedure Error: ${error.message}. Consider running Updater Mode.`, 'error');
       console.error("Procedure failed:", error);
     }
   }
-
-  /**
-   * Parses the raw text of a prompt file into a structured object.
-   */
-  function parsePromptText(rawText, index) {
-      const id = `SI-${String(index + 1).padStart(3, '0')}`;
-      const beforeMarker = "~~####PROMPT_BEFORE####~~";
-      const sysMarker = "~~####SYSTEM_INSTRUCTIONS####~~";
-      const afterMarker = "~~####PROMPT_AFTER####~~";
-  
-      const beforeIndex = rawText.indexOf(beforeMarker);
-      const sysIndex = rawText.indexOf(sysMarker);
-      const afterIndex = rawText.indexOf(afterMarker);
-  
-      if (beforeIndex === -1 || sysIndex === -1 || afterIndex === -1) {
-          console.warn(`Could not parse prompt at index ${index}. Missing markers.`);
-          return null;
-      }
-  
-      const markdown = rawText.substring(beforeIndex + beforeMarker.length, sysIndex).trim();
-      const instructions = rawText.substring(sysIndex + sysMarker.length, afterIndex).trim();
-  
-      return { id, markdown, instructions };
-  }
-
 
   /**
    * Fetches the cached prompts and populates the library UI list.
@@ -296,10 +309,105 @@ import { parse as parseAetherflow } from './aetherflow_parser.js';
    */
   function startUpdaterMode() {
     toggleLibraryUI(false);
-    alert("Updater Mode will now begin. The page will reload...");
+    showNotification("Updater Mode will now begin. The page will reload...", 'info');
     browser.storage.local.set({ 'startUpdaterMode': true }).then(() => {
-        location.reload();
+        setTimeout(() => location.reload(), 1500); // Give user time to read the banner
     });
+  }
+
+  /**
+   * Finds the attachment point and injects the main library button and container.
+   */
+  /**
+   * Renders the UI for handling missing data links.
+   * @param {Array<DataLinkError>} errors - The list of data link errors.
+   * @param {string} originalText - The original text that caused the errors.
+   */
+  async function showMissingLinksUI(errors, originalText) {
+    if (!shadowRoot) {
+      // Ensure the main library container is visible to create the shadowRoot
+      await toggleLibraryUI(true);
+    }
+
+    // Hide the main library view and show a container for our new UI
+    const libraryView = shadowRoot.getElementById('library-view');
+    if (libraryView) libraryView.style.display = 'none';
+
+    let missingLinksView = shadowRoot.getElementById('missing-links-view');
+    if (missingLinksView) missingLinksView.remove(); // Clear previous instances
+
+    missingLinksView = document.createElement('div');
+    missingLinksView.id = 'missing-links-view';
+    shadowRoot.appendChild(missingLinksView);
+
+    try {
+        const [htmlResponse, cssResponse] = await Promise.all([
+            fetch(browser.runtime.getURL('src/missing_links_ui.html')),
+            fetch(browser.runtime.getURL('src/missing_links_ui.css'))
+        ]);
+        const html = await htmlResponse.text();
+        const css = await cssResponse.text();
+
+        missingLinksView.innerHTML = `<style>${css}</style>${html}`;
+
+        const tableBody = shadowRoot.getElementById('missing-links-table-body');
+        errors.forEach((error, index) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><span class="source-link">${error.context.link}</span></td>
+                <td><span class="type-badge type-${error.context.type}">${error.context.type}</span></td>
+                <td><input type="text" data-error-index="${index}" placeholder="Enter replacement data..."></td>
+            `;
+            tableBody.appendChild(row);
+        });
+
+        shadowRoot.getElementById('cancel-aetherflow-btn').onclick = () => {
+            if (libraryView) libraryView.style.display = 'block';
+            missingLinksView.remove();
+        };
+
+        shadowRoot.getElementById('retry-aetherflow-btn').onclick = async () => {
+            const overrides = new Map();
+            const inputs = shadowRoot.querySelectorAll('#missing-links-table-body input[type="text"]');
+
+            inputs.forEach(input => {
+                if (input.value) {
+                    const errorIndex = parseInt(input.dataset.errorIndex, 10);
+                    const link = errors[errorIndex].context.link;
+                    overrides.set(link, input.value);
+                }
+            });
+
+            console.log("Retrying Aetherflow with overrides:", overrides);
+
+            // Hide the missing links UI and re-show the library
+            if (libraryView) libraryView.style.display = 'block';
+            missingLinksView.remove();
+
+            try {
+                const submitButton = await waitForElement('Run', "//*[@aria-label='Run']");
+                submitButton.disabled = true;
+
+                const cleanText = await parseAetherflow(originalText, procedure, overrides);
+                const inputArea = document.querySelector(procedure.promptSubmission.inputArea);
+
+                inputArea.value = cleanText;
+                inputArea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+
+                submitButton.click(); // Re-dispatch the final click
+            } catch (error) {
+                showNotification(`Aetherflow retry failed: ${error.message}`, 'error');
+                console.error("Aetherflow retry failed:", error);
+            } finally {
+                 const submitButton = await waitForElement('Run', "//*[@aria-label='Run']");
+                 if (submitButton) submitButton.disabled = false;
+            }
+        };
+
+    } catch (e) {
+        console.error("Failed to render Missing Links UI:", e);
+        showNotification("Error rendering fallback UI. Check console.", 'error');
+    }
   }
 
   /**
@@ -334,7 +442,7 @@ import { parse as parseAetherflow } from './aetherflow_parser.js';
       // We attach the library UI container at the same time for simplicity.
     } catch (error) {
       console.error('Failed to inject library button:', error);
-      alert('Forge: Could not find the anchor element to attach the library button. Please run the Updater Mode from the extension\'s options page to fix this.');
+      showNotification('Forge: Could not find the anchor element to attach the library button. Please run Updater Mode.', 'error');
     }
   }
 
@@ -373,8 +481,13 @@ import { parse as parseAetherflow } from './aetherflow_parser.js';
             submitButton.click();
 
           } catch (error) {
-            console.error("Aetherflow: Error during parsing:", error);
-            alert(`Aetherflow Engine Error:\n\n${error.message}`);
+            if (error.dataLinkErrors) {
+                console.warn("Aetherflow: Data link errors detected.", error.dataLinkErrors);
+                showMissingLinksUI(error.dataLinkErrors, rawText);
+            } else {
+                console.error("Aetherflow: Error during parsing:", error);
+                showNotification(`Aetherflow Engine Error: ${error.message}`, 'error');
+            }
           } finally {
             submitButton.disabled = false;
           }

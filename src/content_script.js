@@ -2,15 +2,12 @@
  * content_script.js
  *
  * This is the main script injected into the AI Studio page.
- *
- * Responsibilities:
- * - Initializes and manages the self-updating procedure from `procedure.json`.
- * - Injects the "Instructions Library" button onto the page.
- * - Creates a Shadow DOM to host the library UI, preventing CSS conflicts.
- * - Fetches cached prompts from storage and populates the library UI.
- * - Executes the procedure steps (clicking buttons, pasting text) when a user selects a prompt.
- * - Listens for the user to start the "Updater Mode" and hands control over to the Updater module.
+ * V2.0 - Refactored to use npm modules and an event bus for clean architecture.
  */
+import autoAnimate from '@formkit/auto-animate';
+import { marked } from 'marked';
+import { Updater } from './updater.js';
+import { bus } from './event_bus.js';
 
 // Use an IIFE to avoid polluting the global scope of the host page.
 (async function() {
@@ -55,10 +52,6 @@
   /**
    * Waits for a specific element to appear in the DOM.
    * Uses MutationObserver for efficiency. Rejects after a timeout.
-   * @param {string} ariaLabel - The aria-label to query for.
-   * @param {string} xpath - The XPath to query for as a fallback.
-   * @param {number} timeout - Maximum time to wait in ms.
-   * @returns {Promise<Element>} - Resolves with the found element.
    */
   function waitForElement(ariaLabel, xpath, timeout = 10000) {
     return new Promise((resolve, reject) => {
@@ -101,7 +94,6 @@
 
   /**
    * Executes the entire procedure to load a prompt into the UI.
-   * @param {string} instructions - The system instructions text to paste.
    */
   async function executeProcedure(instructions) {
     console.log("Executing procedure...");
@@ -133,10 +125,6 @@
 
   /**
    * Parses the raw text of a prompt file into a structured object.
-   * Adheres strictly to the specified string manipulation method.
-   * @param {string} rawText - The raw text from the prompt file.
-   * @param {number} index - The index of the prompt in the list, used for ID generation.
-   * @returns {object|null} - An object with { id, markdown, instructions } or null if parsing fails.
    */
   function parsePromptText(rawText, index) {
       const id = `SI-${String(index + 1).padStart(3, '0')}`;
@@ -175,33 +163,29 @@
     const basePrompts = data[BASE_PROMPT_CACHE_KEY] || [];
     const userPrompts = data[USER_PROMPT_CACHE_KEY] || [];
     const prompts = [...basePrompts, ...userPrompts];
-    listContainer.innerHTML = '';
+    listContainer.innerHTML = ''; // Clear for auto-animation
 
     if (prompts.length === 0) {
-      listContainer.innerHTML = '<li class="prompt-item">No prompts found. Check the extension options to add sources.</li>';
+      listContainer.innerHTML = '<li class="prompt-item">No prompts found. Check options.</li>';
       return;
     }
 
     const parsedPrompts = prompts.map(parsePromptText).filter(p => p !== null);
 
-    parsedPrompts.forEach(prompt => {
+    parsedPrompts.forEach((prompt, index) => {
       const listItem = document.createElement('div');
       listItem.className = 'prompt-item';
-      listItem.textContent = prompt.id + " - " + (prompt.markdown.split('\n').replace('#', '').trim() || 'Untitled Prompt');
+      listItem.textContent = prompt.id + " - " + (prompt.markdown.split('\n')[0].replace('#', '').trim() || 'Untitled Prompt');
       listItem.dataset.promptId = prompt.id;
       
       listItem.addEventListener('mouseenter', () => {
-         // Naive markdown to HTML for preview
-         const basicHtml = prompt.markdown
-           .replace(/^#\s(.+)/gm, '<h1>$1</h1>')
-           .replace(/^##\s(.+)/gm, '<h2>$1</h2>')
-           .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-           .replace(/\n/g, '<br>');
-        previewContainer.innerHTML = basicHtml;
+        // [UPGRADE COMPLETE] Use 'marked' for rich HTML preview
+        previewContainer.innerHTML = marked.parse(prompt.markdown, { sanitize: true });
       });
 
       listItem.addEventListener('click', () => {
-        executeProcedure(prompt.instructions);
+        // [UPGRADE COMPLETE] Emit a 'loadPrompt' signal instead of direct call
+        bus.emit('loadPrompt', prompt);
       });
       
       listContainer.appendChild(listItem);
@@ -210,7 +194,6 @@
 
   /**
    * Toggles the visibility of the library panel. Creates it on first open.
-   * @param {boolean} [forceState] - Optional: true to show, false to hide.
    */
   async function toggleLibraryUI(forceState) {
     libraryVisible = (forceState !== undefined) ? forceState : !libraryVisible;
@@ -225,8 +208,8 @@
         shadowRoot = container.attachShadow({ mode: 'open' });
         
         const [htmlResponse, cssResponse] = await Promise.all([
-            fetch(browser.runtime.getURL('library_ui.html')),
-            fetch(browser.runtime.getURL('library_ui.css'))
+            fetch(browser.runtime.getURL('src/library_ui.html')),
+            fetch(browser.runtime.getURL('src/library_ui.css'))
         ]);
         
         const html = await htmlResponse.text();
@@ -237,21 +220,27 @@
           ${html}
         `;
 
-        // Add event listeners to controls inside the Shadow DOM
+        // --- UPGRADE IMPLEMENTATIONS ---
+
+        // 1. Attach listeners that emit signals via the event bus
         shadowRoot.getElementById('close-library-btn').addEventListener('click', () => toggleLibraryUI(false));
-        shadowRoot.getElementById('updater-mode-btn').addEventListener('click', startUpdaterMode);
-        
-        // TODO: Add a theme toggle button that adds/removes a 'dark' class to #library-wrapper
-        // document.documentElement.classList.contains('dark-theme-enabled') might check host page theme
+        shadowRoot.getElementById('updater-mode-btn').addEventListener('click', () => {
+          bus.emit('startUpdater'); // [UPGRADE COMPLETE]
+        });
+
+        // 2. Attach auto-animate to the list container for smooth transitions
+        const listContainer = shadowRoot.getElementById('prompt-list');
+        if (listContainer) {
+          autoAnimate(listContainer); // [UPGRADE COMPLETE]
+        }
         
         populateLibrary();
         
       } catch (error) {
         console.error("Failed to load library UI:", error);
         container.textContent = "Error loading UI.";
-      }
+       }
     } else if (libraryVisible) {
-        // Refresh library content every time it's opened in case of updates.
         populateLibrary();
     }
   }
@@ -261,8 +250,7 @@
    */
   function startUpdaterMode() {
     toggleLibraryUI(false);
-    alert("Updater Mode will now begin. The page will reload.\n\nPlease follow the on-screen instructions to re-calibrate the extension.");
-    // Use storage to signal the updater mode should start after reload.
+    alert("Updater Mode will now begin. The page will reload...");
     browser.storage.local.set({ 'startUpdaterMode': true }).then(() => {
         location.reload();
     });
@@ -308,6 +296,14 @@
    * Main initialization function for the content script.
    */
   async function init() {
+    // [UPGRADE COMPLETE] Set up listeners for signals from the UI
+    bus.on('loadPrompt', prompt => {
+      executeProcedure(prompt.instructions);
+    });
+    bus.on('startUpdater', () => {
+      startUpdaterMode();
+    });
+
     const shouldStartUpdater = await browser.storage.local.get('startUpdaterMode');
     if(shouldStartUpdater.startUpdaterMode) {
         await browser.storage.local.remove('startUpdaterMode');

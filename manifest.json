@@ -41,7 +41,8 @@
         "src/prompts/creative_writer.txt",
         "src/library_ui.html",
         "src/library_ui.css",
-        "src/options.css"
+        "src/options.css",
+        "src/event_bus.js"
       ],
       "matches": [
         "*://aistudio.google.com/*"
